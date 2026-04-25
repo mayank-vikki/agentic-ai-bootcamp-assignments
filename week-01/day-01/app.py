@@ -25,8 +25,8 @@ load_dotenv()
 
 # ── Initialize the LLM ───────────────────────────────────────────────────────
 # Switch model here: "deepseek", "openai", "openai-mini", etc.
-MODEL = os.getenv("BOOTCAMP_MODEL", "openai")
-llm = get_model(MODEL)
+llm = get_model()  # uses FALLBACK_CHAIN: deepseek → openai
+MODEL = getattr(llm, "_bootcamp_model_name", "deepseek")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
