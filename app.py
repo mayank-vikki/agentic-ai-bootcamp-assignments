@@ -10,12 +10,6 @@ Demonstrates:
   3. Production implications of ignoring message history
 """
 
-import sys
-import os
-
-# Add parent dirs so we can import shared utils
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
 from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage
 from utils.models import get_model
