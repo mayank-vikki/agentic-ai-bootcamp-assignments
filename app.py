@@ -2,7 +2,6 @@
 Day 2 Assignment — Routing with LangGraph (Tier-Based Support Flow)
 
 Bootcamp: Agentic AI Enterprise Mastery (Manifold AI)
-Model:    DeepSeek Chat (via OpenAI-compatible API)
 
 Demonstrates:
   1. Typed conversation state with SupportState (TypedDict)
@@ -14,11 +13,9 @@ import operator
 from typing import TypedDict, Annotated
 
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-
-from utils.models import get_model
-from utils.logger import logged_invoke
 
 load_dotenv()
 
@@ -34,8 +31,7 @@ class SupportState(TypedDict):
 
 # ── Initialize LLM ──────────────────────────────────────────────────────────
 
-llm = get_model()  # DeepSeek → OpenAI fallback
-MODEL = getattr(llm, "_bootcamp_model_name", "deepseek")
+llm = ChatOpenAI(model="gpt-4.1-nano")
 
 
 # ── Routing Function ─────────────────────────────────────────────────────────
@@ -59,18 +55,14 @@ def check_user_tier_node(state: SupportState):
 
 def vip_agent_node(state: SupportState):
     """VIP path: priority handling with LLM response, no escalation."""
-    response = logged_invoke(
-        llm,
-        [
-            SystemMessage(
-                content="You are a premium support agent. The customer is a VIP. "
-                "Be concise, professional, and prioritize their request. "
-                "Respond in 2-3 sentences."
-            ),
-            *state["messages"],
-        ],
-        model_name=MODEL,
-    )
+    response = llm.invoke([
+        SystemMessage(
+            content="You are a premium support agent. The customer is a VIP. "
+            "Be concise, professional, and prioritize their request. "
+            "Respond in 2-3 sentences."
+        ),
+        *state["messages"],
+    ])
     return {
         "messages": [response],
         "should_escalate": False,
@@ -80,18 +72,14 @@ def vip_agent_node(state: SupportState):
 
 def standard_agent_node(state: SupportState):
     """Standard path: general handling, may escalate to human agent."""
-    response = logged_invoke(
-        llm,
-        [
-            SystemMessage(
-                content="You are a support agent handling a standard-tier request. "
-                "Be helpful but note that complex issues may need escalation. "
-                "Respond in 2-3 sentences."
-            ),
-            *state["messages"],
-        ],
-        model_name=MODEL,
-    )
+    response = llm.invoke([
+        SystemMessage(
+            content="You are a support agent handling a standard-tier request. "
+            "Be helpful but note that complex issues may need escalation. "
+            "Respond in 2-3 sentences."
+        ),
+        *state["messages"],
+    ])
     return {
         "messages": [response],
         "should_escalate": True,
