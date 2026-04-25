@@ -64,40 +64,69 @@ MODEL_REGISTRY = {
 }
 
 DEFAULT_MODEL = "deepseek"
+FALLBACK_CHAIN = ["deepseek", "openai"]  # Try in order; first that works wins
 
 
-def get_model(name: str | None = None, **kwargs):
-    """Return a LangChain ChatModel instance for the given registry name.
-
-    Args:
-        name: Key from MODEL_REGISTRY (e.g. "deepseek", "openai"). Defaults to DEFAULT_MODEL.
-        **kwargs: Extra args forwarded to the ChatModel constructor (temperature, seed, etc.)
-    """
+def _build_chat_model(name: str, **kwargs):
+    """Build a LangChain ChatModel for a single registry entry (no fallback)."""
     from langchain_openai import ChatOpenAI
 
-    name = name or DEFAULT_MODEL
     entry = MODEL_REGISTRY.get(name)
     if not entry:
         raise ValueError(f"Unknown model '{name}'. Available: {list(MODEL_REGISTRY.keys())}")
 
     api_key = os.getenv(entry["env_var"])
     if not api_key:
-        raise EnvironmentError(
-            f"Missing env var {entry['env_var']} for model '{name}'. "
-            f"Set it in your .env file or system environment."
-        )
+        raise EnvironmentError(f"Missing env var {entry['env_var']} for model '{name}'.")
 
     if entry["provider"] in ("openai", "openai_compat"):
-        init_args = {
-            "model": entry["model_id"],
-            "api_key": api_key,
-            **kwargs,
-        }
+        init_args = {"model": entry["model_id"], "api_key": api_key, **kwargs}
         if entry.get("base_url"):
             init_args["base_url"] = entry["base_url"]
         return ChatOpenAI(**init_args)
 
     raise ValueError(f"Unsupported provider '{entry['provider']}' for model '{name}'")
+
+
+def get_model(name: str | None = None, fallback: bool = True, **kwargs):
+    """Return a LangChain ChatModel instance with automatic fallback.
+
+    Args:
+        name: Key from MODEL_REGISTRY. Defaults to DEFAULT_MODEL.
+        fallback: If True (default), on failure try the next model in FALLBACK_CHAIN.
+        **kwargs: Extra args forwarded to the ChatModel constructor.
+
+    Returns:
+        Tuple-style: the ChatModel instance. The resolved model name is stored
+        as model._bootcamp_model_name for the logger to pick up.
+    """
+    name = name or DEFAULT_MODEL
+
+    # Build the ordered list of models to try
+    if fallback:
+        chain = [name] + [m for m in FALLBACK_CHAIN if m != name]
+    else:
+        chain = [name]
+
+    errors = []
+    for candidate in chain:
+        try:
+            llm = _build_chat_model(candidate, **kwargs)
+            # Quick connectivity check — a tiny call to verify the key works
+            llm.invoke("hi")
+            llm._bootcamp_model_name = candidate
+            if candidate != name:
+                print(f"[bootcamp] {name} unavailable, fell back to {candidate}")
+            else:
+                print(f"[bootcamp] Using model: {candidate}")
+            return llm
+        except Exception as e:
+            errors.append((candidate, str(e)))
+            continue
+
+    # All failed
+    error_summary = "\n".join(f"  - {m}: {err[:120]}" for m, err in errors)
+    raise RuntimeError(f"All models failed:\n{error_summary}")
 
 
 def list_models() -> dict:

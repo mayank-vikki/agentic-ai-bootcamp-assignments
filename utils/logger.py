@@ -72,9 +72,9 @@ def logged_invoke(
     if isinstance(messages, str):
         messages = [HumanMessage(content=messages)]
 
-    # Try to detect model name from registry
+    # Auto-detect model name from fallback chain if not provided
     if not model_name:
-        model_name = DEFAULT_MODEL
+        model_name = getattr(llm, "_bootcamp_model_name", DEFAULT_MODEL)
 
     start = datetime.now()
     log_start = {
