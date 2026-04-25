@@ -2,7 +2,6 @@
 Day 1 Assignment — Context Failure → Context Fix (Production Mindset)
 
 Bootcamp: Agentic AI Enterprise Mastery (Manifold AI)
-Model:    DeepSeek Chat (via OpenAI-compatible API)
 
 Demonstrates:
   1. Why naive string-based LLM calls lose context (stateless behavior)
@@ -11,16 +10,14 @@ Demonstrates:
 """
 
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from utils.models import get_model
-from utils.logger import logged_invoke
 
 load_dotenv()
 
 # ── Initialize the LLM ───────────────────────────────────────────────────────
-# Switch model here: "deepseek", "openai", "openai-mini", etc.
-llm = get_model()  # uses FALLBACK_CHAIN: deepseek → openai
-MODEL = getattr(llm, "_bootcamp_model_name", "deepseek")
+
+llm = ChatOpenAI(model="gpt-4.1-nano")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -31,34 +28,20 @@ print("=" * 70)
 print("PART 1: Naive Invocation — Context Break Demo")
 print("=" * 70)
 
-resp1 = logged_invoke(
-    llm,
-    "We are building an AI system for processing medical insurance claims.",
-    model_name=MODEL,
-)
+# Two separate string-based llm.invoke() calls — context is lost between them
+resp1 = llm.invoke("We are building an AI system for processing medical insurance claims.")
 print(f"\n[Prompt 1] Response:\n{resp1.content}\n")
 
-resp2 = logged_invoke(
-    llm,
-    "What are the main risks in this system?",
-    model_name=MODEL,
-)
+resp2 = llm.invoke("What are the main risks in this system?")
 print(f"\n[Prompt 2] Response:\n{resp2.content}\n")
 
-# ── Comment explaining the failure ──────────────────────────────────────────
-# WHY DOES THE SECOND CALL FAIL OR BEHAVE INCONSISTENTLY?
-#
+# WHY DOES THE SECOND CALL FAIL?
 # Each llm.invoke() call is completely independent. The LLM has no memory
 # of the first call. When we ask "What are the main risks in this system?",
 # the model has no idea which "system" we're referring to — it never saw the
-# medical insurance claims context. It will either:
-#   (a) Hallucinate a generic answer about "systems" in general, or
-#   (b) Pick an arbitrary system domain to answer about, or
-#   (c) Ask for clarification (unlikely with most models).
+# medical insurance claims context.
 #
-# This is because LLMs are STATELESS. Every API call starts with a blank
-# slate. The "conversational" feel of ChatGPT is an illusion created by
-# re-sending the full message history on every turn.
+# LLMs are STATELESS. Every API call starts with a blank slate.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,7 +64,7 @@ messages = [
     ),
 ]
 
-resp3 = logged_invoke(llm, messages, model_name=MODEL)
+resp3 = llm.invoke(messages)
 print(f"\n[Messages API] Response:\n{resp3.content}\n")
 
 

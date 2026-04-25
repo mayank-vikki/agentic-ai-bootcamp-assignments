@@ -19,6 +19,14 @@ cp .env.example .env   # add your API keys
 pip install -r requirements.txt
 ```
 
+> **Important:** `.env` must NOT be committed. It contains API keys and is excluded via `.gitignore`.
+
+## How to Run
+
+```bash
+python app.py
+```
+
 ## Usage
 
 ```python
