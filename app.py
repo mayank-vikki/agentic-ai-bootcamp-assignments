@@ -1,101 +1,189 @@
 """
-Day 1 Assignment — Context Failure → Context Fix (Production Mindset)
+Day 2 Assignment — Routing with LangGraph (Tier-Based Support Flow)
 
 Bootcamp: Agentic AI Enterprise Mastery (Manifold AI)
 
 Demonstrates:
-  1. Why naive string-based LLM calls lose context (stateless behavior)
-  2. How the Messages API preserves conversation state
-  3. Production implications of ignoring message history
+  1. Typed conversation state with SupportState (TypedDict)
+  2. Conditional routing based on user tier (VIP vs standard)
+  3. Explicit, auditable graph structure using LangGraph
 """
+
+import operator
+from typing import TypedDict, Annotated
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, END
 
 load_dotenv()
 
-# ── Initialize the LLM ───────────────────────────────────────────────────────
+
+# ── State Definition ─────────────────────────────────────────────────────────
+
+class SupportState(TypedDict):
+    messages: Annotated[list[BaseMessage], operator.add]
+    should_escalate: bool
+    issue_type: str
+    user_tier: str  # "vip" or "standard"
+
+
+# ── Initialize LLM ──────────────────────────────────────────────────────────
 
 llm = ChatOpenAI(model="gpt-4.1-nano")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PART 1: Context Break Demonstration (Naive Invocation)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Routing Function ─────────────────────────────────────────────────────────
 
-print("=" * 70)
-print("PART 1: Naive Invocation — Context Break Demo")
-print("=" * 70)
-
-# Two separate string-based llm.invoke() calls — context is lost between them
-resp1 = llm.invoke("We are building an AI system for processing medical insurance claims.")
-print(f"\n[Prompt 1] Response:\n{resp1.content}\n")
-
-resp2 = llm.invoke("What are the main risks in this system?")
-print(f"\n[Prompt 2] Response:\n{resp2.content}\n")
-
-# WHY DOES THE SECOND CALL FAIL?
-# Each llm.invoke() call is completely independent. The LLM has no memory
-# of the first call. When we ask "What are the main risks in this system?",
-# the model has no idea which "system" we're referring to — it never saw the
-# medical insurance claims context.
-#
-# LLMs are STATELESS. Every API call starts with a blank slate.
+def route_by_tier(state: SupportState) -> str:
+    """Route based on user tier."""
+    if state.get("user_tier") == "vip":
+        return "vip_path"
+    return "standard_path"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PART 2: Context Fix Using Messages API
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Node Functions ───────────────────────────────────────────────────────────
 
-print("=" * 70)
-print("PART 2: Messages API — Context Preserved")
-print("=" * 70)
-
-messages = [
-    SystemMessage(
-        content="You are a senior AI architect reviewing production systems."
-    ),
-    HumanMessage(
-        content="We are building an AI system for processing medical insurance claims."
-    ),
-    HumanMessage(
-        content="What are the main risks in this system?"
-    ),
-]
-
-resp3 = llm.invoke(messages)
-print(f"\n[Messages API] Response:\n{resp3.content}\n")
+def check_user_tier_node(state: SupportState):
+    """Decide if user is VIP or standard based on message content."""
+    first_message = state["messages"][0].content.lower()
+    if "vip" in first_message or "premium" in first_message:
+        return {"user_tier": "vip"}
+    return {"user_tier": "standard"}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PART 3: Reflection Block (Mandatory)
-# ═══════════════════════════════════════════════════════════════════════════════
+def vip_agent_node(state: SupportState):
+    """VIP path: priority handling with LLM response, no escalation."""
+    response = llm.invoke([
+        SystemMessage(
+            content="You are a premium support agent. The customer is a VIP. "
+            "Be concise, professional, and prioritize their request. "
+            "Respond in 2-3 sentences."
+        ),
+        *state["messages"],
+    ])
+    return {
+        "messages": [response],
+        "should_escalate": False,
+        "issue_type": "vip_support",
+    }
+
+
+def standard_agent_node(state: SupportState):
+    """Standard path: general handling, may escalate to human agent."""
+    response = llm.invoke([
+        SystemMessage(
+            content="You are a support agent handling a standard-tier request. "
+            "Be helpful but note that complex issues may need escalation. "
+            "Respond in 2-3 sentences."
+        ),
+        *state["messages"],
+    ])
+    return {
+        "messages": [response],
+        "should_escalate": True,
+        "issue_type": "standard_support",
+    }
+
+
+# ── Graph Construction ───────────────────────────────────────────────────────
+
+def build_graph():
+    """Build and compile the tier-based routing graph."""
+    workflow = StateGraph(SupportState)
+
+    workflow.add_node("check_tier", check_user_tier_node)
+    workflow.add_node("vip_agent", vip_agent_node)
+    workflow.add_node("standard_agent", standard_agent_node)
+
+    workflow.set_entry_point("check_tier")
+
+    workflow.add_conditional_edges(
+        "check_tier",
+        route_by_tier,
+        {
+            "vip_path": "vip_agent",
+            "standard_path": "standard_agent",
+        },
+    )
+
+    workflow.add_edge("vip_agent", END)
+    workflow.add_edge("standard_agent", END)
+
+    return workflow.compile()
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    graph = build_graph()
+
+    # ── Run 1: VIP customer ──────────────────────────────────────────────
+    print("=" * 70)
+    print("RUN 1: VIP Customer")
+    print("=" * 70)
+
+    vip_result = graph.invoke({
+        "messages": [HumanMessage(content="I'm a VIP customer, please check my order")],
+        "should_escalate": False,
+        "issue_type": "",
+        "user_tier": "",
+    })
+
+    print(f"\n  Tier:     {vip_result.get('user_tier')}")
+    print(f"  Escalate: {vip_result.get('should_escalate')}")
+    print(f"  Type:     {vip_result.get('issue_type')}")
+    print(f"  Response: {vip_result['messages'][-1].content[:200]}")
+
+    # ── Run 2: Standard customer ─────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("RUN 2: Standard Customer")
+    print("=" * 70)
+
+    standard_result = graph.invoke({
+        "messages": [HumanMessage(content="Check my order status")],
+        "should_escalate": False,
+        "issue_type": "",
+        "user_tier": "",
+    })
+
+    print(f"\n  Tier:     {standard_result.get('user_tier')}")
+    print(f"  Escalate: {standard_result.get('should_escalate')}")
+    print(f"  Type:     {standard_result.get('issue_type')}")
+    print(f"  Response: {standard_result['messages'][-1].content[:200]}")
+
+    # ── Summary ──────────────────────────────────────────────────────────
+    print("\n" + "=" * 70)
+    print("ROUTING SUMMARY")
+    print("=" * 70)
+    print(f"  VIP result:      tier={vip_result['user_tier']}, escalate={vip_result['should_escalate']}")
+    print(f"  Standard result: tier={standard_result['user_tier']}, escalate={standard_result['should_escalate']}")
+
+
+if __name__ == "__main__":
+    main()
+
 
 """
 Reflection:
 
-1. Why did string-based invocation fail?
-   Each call to llm.invoke(string) is a standalone request. The LLM receives
-   only that single string with zero context from prior calls. When the second
-   prompt says "this system", the model has no reference to "medical insurance
-   claims" — it was never part of the input. This is the fundamental stateless
-   nature of LLM APIs: no call remembers any previous call.
+1. Why use typed state (SupportState) instead of a plain dict?
+   TypedDict provides compile-time and IDE-level visibility into what fields
+   the graph operates on. Every node reads and writes a known contract. When
+   the graph grows (adding escalation nodes, feedback loops), typed state
+   prevents silent key mismatches that plain dicts allow.
 
-2. Why does message-based invocation work?
-   The Messages API bundles the entire conversation — system instructions, prior
-   human messages, and prior assistant responses — into a single structured list.
-   When we send [SystemMessage, HumanMessage("insurance claims..."),
-   HumanMessage("risks?")], the model sees the full thread in one shot. The
-   "context" isn't stored server-side; it's explicitly re-sent by the client.
+2. Why is explicit routing (route_by_tier) better than embedding logic in nodes?
+   The routing function is a single, testable unit. You can write a unit test
+   for route_by_tier without invoking the graph. In production, routing decisions
+   are auditable — you can log which path was taken without parsing node output.
+   This separation of routing from processing is the core LangGraph pattern.
 
-3. What would break in a production AI system if we ignore message history?
-   - Multi-turn workflows (e.g., claim intake → validation → decision) would
-     lose track of the case being processed.
-   - The system would produce incoherent or contradictory responses across steps.
-   - Users would need to repeat all context in every message, defeating the
-     purpose of a conversational interface.
-   - Audit trails would be meaningless because each response is disconnected.
-   - In regulated domains (insurance, healthcare), this inconsistency could
-     cause compliance violations and incorrect claim decisions.
+3. What would you change for production?
+   - Replace the keyword-based tier check with a database lookup (CRM integration)
+   - Add an escalation node that hands off to a human agent queue
+   - Add observability: log which path was taken, latency per node, and LLM cost
+   - Add a feedback edge: if the VIP agent can't resolve, route to escalation
+   - Use LangGraph's persistence (checkpointers) for multi-turn conversations
 """
