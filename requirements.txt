@@ -6,3 +6,4 @@ langgraph
 python-dotenv
 pydantic
 tavily-python
+pyyaml
